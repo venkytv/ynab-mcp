@@ -329,6 +329,64 @@ func TestCreateTransaction(t *testing.T) {
 	}
 }
 
+func TestCreateSplitTransaction(t *testing.T) {
+	var gotBody SaveTransactionWrapper
+	client, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.URL.Path != "/budgets/budget-1/transactions" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &gotBody)
+
+		jsonResponse(t, w, map[string]any{
+			"transaction": map[string]any{
+				"id": "new-1", "date": "2024-03-15", "amount": -10500,
+				"account_id": "a1", "account_name": "Checking",
+				"cleared": "uncleared", "approved": false,
+				"subtransactions": []map[string]any{
+					{"id": "sub-1", "amount": -7000, "category_id": "cat-1"},
+					{"id": "sub-2", "amount": -3500, "category_id": "cat-2"},
+				},
+			},
+		})
+	})
+
+	cat1 := "cat-1"
+	cat2 := "cat-2"
+	txn := SaveTransaction{
+		AccountID:  "a1",
+		Date:       "2024-03-15",
+		Amount:     -10500,
+		CategoryID: nil,
+		SubTransactions: []SaveSubTransaction{
+			{Amount: -7000, CategoryID: &cat1},
+			{Amount: -3500, CategoryID: &cat2},
+		},
+	}
+	created, err := client.CreateTransaction(context.Background(), "budget-1", txn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.ID != "new-1" {
+		t.Errorf("created id = %q", created.ID)
+	}
+	if gotBody.Transaction.CategoryID != nil {
+		t.Errorf("parent category_id = %v, want nil", gotBody.Transaction.CategoryID)
+	}
+	if len(gotBody.Transaction.SubTransactions) != 2 {
+		t.Fatalf("got %d subtransactions, want 2", len(gotBody.Transaction.SubTransactions))
+	}
+	if gotBody.Transaction.SubTransactions[0].Amount != -7000 {
+		t.Errorf("first split amount = %d, want -7000", gotBody.Transaction.SubTransactions[0].Amount)
+	}
+	if gotBody.Transaction.SubTransactions[1].CategoryID == nil || *gotBody.Transaction.SubTransactions[1].CategoryID != "cat-2" {
+		t.Errorf("second split category_id = %v, want cat-2", gotBody.Transaction.SubTransactions[1].CategoryID)
+	}
+}
+
 func TestUpdateTransaction(t *testing.T) {
 	var gotBody SaveTransactionWrapper
 	client, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {

@@ -99,16 +99,26 @@ type SubTransaction struct {
 }
 
 type SaveTransaction struct {
-	AccountID  string  `json:"account_id"`
-	Date       string  `json:"date"`
+	AccountID       string               `json:"account_id"`
+	Date            string               `json:"date"`
+	Amount          int64                `json:"amount"`
+	PayeeID         *string              `json:"payee_id,omitempty"`
+	PayeeName       *string              `json:"payee_name,omitempty"`
+	CategoryID      *string              `json:"category_id"`
+	Memo            *string              `json:"memo,omitempty"`
+	Cleared         *string              `json:"cleared,omitempty"`
+	Approved        *bool                `json:"approved,omitempty"`
+	FlagColor       *string              `json:"flag_color,omitempty"`
+	SubTransactions []SaveSubTransaction `json:"subtransactions,omitempty"`
+}
+
+type SaveSubTransaction struct {
+	ID         *string `json:"id,omitempty"`
 	Amount     int64   `json:"amount"`
 	PayeeID    *string `json:"payee_id,omitempty"`
 	PayeeName  *string `json:"payee_name,omitempty"`
 	CategoryID *string `json:"category_id,omitempty"`
 	Memo       *string `json:"memo,omitempty"`
-	Cleared    *string `json:"cleared,omitempty"`
-	Approved   *bool   `json:"approved,omitempty"`
-	FlagColor  *string `json:"flag_color,omitempty"`
 }
 
 type SaveTransactionWrapper struct {

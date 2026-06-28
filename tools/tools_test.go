@@ -215,7 +215,7 @@ func TestCreateTransactionTool(t *testing.T) {
 					"id": "new-1", "date": "2024-03-15", "amount": -10500,
 					"account_id": "a1", "account_name": "Checking",
 					"payee_name": "Grocery Store",
-					"cleared": "uncleared", "approved": false,
+					"cleared":    "uncleared", "approved": false,
 				},
 			},
 		})
@@ -251,6 +251,107 @@ func TestCreateTransactionTool(t *testing.T) {
 	}
 }
 
+func TestCreateSplitTransactionTool(t *testing.T) {
+	env := setupTestEnv(t)
+	env.mux.HandleFunc("/budgets/test-budget/transactions", func(w http.ResponseWriter, r *http.Request) {
+		env.captureBody(r)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"transaction": map[string]any{
+					"id": "new-1", "date": "2024-03-15", "amount": -10500,
+					"account_id": "a1", "account_name": "Checking",
+					"payee_name": "Grocery Store",
+					"cleared":    "uncleared", "approved": false,
+					"subtransactions": []map[string]any{
+						{
+							"id": "sub-1", "amount": -7000,
+							"category_id": "cat-food", "category_name": "Groceries",
+							"memo": "food",
+						},
+						{
+							"id": "sub-2", "amount": -3500,
+							"category_id": "cat-house", "category_name": "Household",
+							"memo": "supplies",
+						},
+					},
+				},
+			},
+		})
+	})
+
+	result := callTool(t, env, "create_transaction", map[string]any{
+		"account_id": "a1",
+		"date":       "2024-03-15",
+		"amount":     -10.50,
+		"payee_name": "Grocery Store",
+		"subtransactions": []map[string]any{
+			{"amount": -7.00, "category_id": "cat-food", "memo": "food"},
+			{"amount": -3.50, "category_id": "cat-house", "memo": "supplies"},
+		},
+	})
+	text := toolText(t, result)
+
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", text)
+	}
+	if !strings.Contains(text, "Sub-transactions:") {
+		t.Errorf("missing split details in output: %s", text)
+	}
+
+	env.bodiesMu.Lock()
+	body := env.bodies["POST /budgets/test-budget/transactions"]
+	env.bodiesMu.Unlock()
+
+	var wrapper struct {
+		Transaction struct {
+			CategoryID      *string `json:"category_id"`
+			SubTransactions []struct {
+				Amount     int64   `json:"amount"`
+				CategoryID *string `json:"category_id"`
+				Memo       *string `json:"memo"`
+			} `json:"subtransactions"`
+		} `json:"transaction"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		t.Fatal(err)
+	}
+	if wrapper.Transaction.CategoryID != nil {
+		t.Errorf("parent category_id = %v, want nil", wrapper.Transaction.CategoryID)
+	}
+	if len(wrapper.Transaction.SubTransactions) != 2 {
+		t.Fatalf("got %d split lines, want 2", len(wrapper.Transaction.SubTransactions))
+	}
+	if wrapper.Transaction.SubTransactions[0].Amount != -7000 {
+		t.Errorf("first split amount = %d, want -7000", wrapper.Transaction.SubTransactions[0].Amount)
+	}
+	if wrapper.Transaction.SubTransactions[1].CategoryID == nil || *wrapper.Transaction.SubTransactions[1].CategoryID != "cat-house" {
+		t.Errorf("second split category_id = %v, want cat-house", wrapper.Transaction.SubTransactions[1].CategoryID)
+	}
+}
+
+func TestCreateSplitTransactionTool_AmountMismatch(t *testing.T) {
+	env := setupTestEnv(t)
+
+	result := callTool(t, env, "create_transaction", map[string]any{
+		"account_id": "a1",
+		"date":       "2024-03-15",
+		"amount":     -10.50,
+		"subtransactions": []map[string]any{
+			{"amount": -7.00, "category_id": "cat-food"},
+			{"amount": -2.00, "category_id": "cat-house"},
+		},
+	})
+	text := toolText(t, result)
+
+	if !result.IsError {
+		t.Fatalf("expected error, got: %s", text)
+	}
+	if !strings.Contains(text, "subtransaction amounts sum") {
+		t.Errorf("unexpected error text: %s", text)
+	}
+}
+
 func TestUpdateTransactionTool_PartialUpdate(t *testing.T) {
 	env := setupTestEnv(t)
 
@@ -281,7 +382,7 @@ func TestUpdateTransactionTool_PartialUpdate(t *testing.T) {
 						"id": "txn-1", "date": "2024-03-15", "amount": -5000,
 						"account_id": "a1", "account_name": "Checking",
 						"category_id": "new-cat", "category_name": "Groceries",
-						"memo": "original memo",
+						"memo":    "original memo",
 						"cleared": "uncleared", "approved": false,
 					},
 				},
@@ -330,6 +431,107 @@ func TestUpdateTransactionTool_PartialUpdate(t *testing.T) {
 	}
 	if wrapper.Transaction.Memo == nil || *wrapper.Transaction.Memo != "original memo" {
 		t.Errorf("memo = %v, want 'original memo'", wrapper.Transaction.Memo)
+	}
+}
+
+func TestUpdateTransactionTool_ToSplit(t *testing.T) {
+	env := setupTestEnv(t)
+
+	env.mux.HandleFunc("/budgets/test-budget/transactions/txn-1", func(w http.ResponseWriter, r *http.Request) {
+		env.captureBody(r)
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			memo := "original memo"
+			payeeID := "p1"
+			catID := "old-cat"
+			json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"transaction": map[string]any{
+						"id": "txn-1", "date": "2024-03-15", "amount": -5000,
+						"account_id": "a1", "account_name": "Checking",
+						"payee_id": payeeID, "payee_name": "Old Payee",
+						"category_id": catID, "memo": memo,
+						"cleared": "uncleared", "approved": false,
+					},
+				},
+			})
+			return
+		}
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"transaction": map[string]any{
+					"id": "txn-1", "date": "2024-03-15", "amount": -5000,
+					"account_id": "a1", "account_name": "Checking",
+					"memo":    "original memo",
+					"cleared": "uncleared", "approved": false,
+					"subtransactions": []map[string]any{
+						{
+							"id": "sub-1", "amount": -3000,
+							"category_id": "cat-food", "category_name": "Groceries",
+						},
+						{
+							"id": "sub-2", "amount": -2000,
+							"category_id": "cat-house", "category_name": "Household",
+						},
+					},
+				},
+			},
+		})
+	})
+
+	result := callTool(t, env, "update_transaction", map[string]any{
+		"transaction_id": "txn-1",
+		"subtransactions": []map[string]any{
+			{"amount": -3.00, "category_id": "cat-food"},
+			{"amount": -2.00, "category_id": "cat-house"},
+		},
+	})
+	text := toolText(t, result)
+
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", text)
+	}
+	if !strings.Contains(text, "Sub-transactions:") {
+		t.Errorf("missing split details in output: %s", text)
+	}
+
+	env.bodiesMu.Lock()
+	body := env.bodies["PUT /budgets/test-budget/transactions/txn-1"]
+	env.bodiesMu.Unlock()
+
+	var wrapper struct {
+		Transaction struct {
+			AccountID       string  `json:"account_id"`
+			Amount          int64   `json:"amount"`
+			CategoryID      *string `json:"category_id"`
+			Memo            *string `json:"memo"`
+			SubTransactions []struct {
+				Amount     int64   `json:"amount"`
+				CategoryID *string `json:"category_id"`
+			} `json:"subtransactions"`
+		} `json:"transaction"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		t.Fatal(err)
+	}
+	if wrapper.Transaction.AccountID != "a1" {
+		t.Errorf("preserved account_id = %q, want a1", wrapper.Transaction.AccountID)
+	}
+	if wrapper.Transaction.Amount != -5000 {
+		t.Errorf("preserved amount = %d, want -5000", wrapper.Transaction.Amount)
+	}
+	if wrapper.Transaction.CategoryID != nil {
+		t.Errorf("parent category_id = %v, want nil", wrapper.Transaction.CategoryID)
+	}
+	if wrapper.Transaction.Memo == nil || *wrapper.Transaction.Memo != "original memo" {
+		t.Errorf("memo = %v, want original memo", wrapper.Transaction.Memo)
+	}
+	if len(wrapper.Transaction.SubTransactions) != 2 {
+		t.Fatalf("got %d split lines, want 2", len(wrapper.Transaction.SubTransactions))
+	}
+	if wrapper.Transaction.SubTransactions[0].Amount != -3000 {
+		t.Errorf("first split amount = %d, want -3000", wrapper.Transaction.SubTransactions[0].Amount)
 	}
 }
 

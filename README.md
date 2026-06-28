@@ -61,8 +61,8 @@ Add to your `claude_desktop_config.json`:
 | `list_payees` | Known payees |
 | `list_transactions` | Transactions with filters (date, account, category, payee, type) |
 | `get_transaction` | Single transaction detail |
-| `create_transaction` | Create a new transaction |
-| `update_transaction` | Update/categorize a transaction (only changed fields) |
+| `create_transaction` | Create a new transaction, including split transactions |
+| `update_transaction` | Update/categorize a transaction, including converting to a split |
 | `get_month_summary` | Monthly budget overview with per-category breakdown |
 
 ## Testing
