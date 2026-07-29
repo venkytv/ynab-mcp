@@ -7,12 +7,13 @@ import (
 	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/venky/ynab-mcp/internal/config"
 	"github.com/venky/ynab-mcp/tools"
 	"github.com/venky/ynab-mcp/ynab"
 )
 
 func main() {
-	loadConfigFile()
+	config.LoadFile()
 
 	token := os.Getenv("YNAB_API_TOKEN")
 	if token == "" {

@@ -1,6 +1,7 @@
 package ynab
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -244,6 +245,9 @@ func TestListTransactions_QueryParams(t *testing.T) {
 		if got := r.URL.Query().Get("since_date"); got != "2024-01-01" {
 			t.Errorf("since_date = %q, want 2024-01-01", got)
 		}
+		if got := r.URL.Query().Get("until_date"); got != "2024-12-31" {
+			t.Errorf("until_date = %q, want 2024-12-31", got)
+		}
 		if got := r.URL.Query().Get("type"); got != "unapproved" {
 			t.Errorf("type = %q, want unapproved", got)
 		}
@@ -252,8 +256,42 @@ func TestListTransactions_QueryParams(t *testing.T) {
 
 	client.ListTransactions(context.Background(), "budget-1", &ListTransactionsOptions{
 		SinceDate: "2024-01-01",
+		UntilDate: "2024-12-31",
 		Type:      "unapproved",
 	})
+}
+
+func TestRawListTransactionsPreservesResponse(t *testing.T) {
+	response := []byte("{\n  \"data\": {\n    \"transactions\": [{\"id\":\"t1\",\"unknown\":null,\"deleted\":true,\"transfer_account_id\":\"a2\",\"subtransactions\":[{\"id\":\"s1\",\"new_amount_field\":\"1.25\"}]}],\n    \"server_knowledge\": 42,\n    \"new_field\": {\"nested\": true}\n  }\n}")
+	requests := 0
+	client, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/budgets/budget-1/transactions" {
+			t.Errorf("path = %q, want /budgets/budget-1/transactions", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("since_date"); got != "2025-04-06" {
+			t.Errorf("since_date = %q, want 2025-04-06", got)
+		}
+		if got := r.URL.Query().Get("until_date"); got != "2026-04-05" {
+			t.Errorf("until_date = %q, want 2026-04-05", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(response)
+	})
+
+	got, err := client.RawListTransactions(context.Background(), "budget-1", &ListTransactionsOptions{
+		SinceDate: "2025-04-06",
+		UntilDate: "2026-04-05",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, response) {
+		t.Errorf("raw response changed:\ngot:  %q\nwant: %q", got, response)
+	}
+	if requests != 1 {
+		t.Errorf("requests = %d, want 1", requests)
+	}
 }
 
 func TestGetTransaction(t *testing.T) {
@@ -501,6 +539,29 @@ func TestRateLimitError(t *testing.T) {
 	}
 	if apiErr.ID != "429" {
 		t.Errorf("error id = %q, want 429", apiErr.ID)
+	}
+}
+
+func TestRawRateLimitErrorDoesNotRetry(t *testing.T) {
+	requests := 0
+	client, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+
+	_, err := client.RawListBudgets(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("error type = %T, want *APIError", err)
+	}
+	if apiErr.ID != "429" {
+		t.Errorf("error id = %q, want 429", apiErr.ID)
+	}
+	if requests != 1 {
+		t.Errorf("requests = %d, want 1", requests)
 	}
 }
 

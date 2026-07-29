@@ -179,6 +179,7 @@ type MonthDetailData struct {
 
 type ListTransactionsOptions struct {
 	SinceDate  string
+	UntilDate  string
 	Type       string
 	AccountID  string
 	CategoryID string

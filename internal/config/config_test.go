@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"os"
@@ -6,8 +6,7 @@ import (
 	"testing"
 )
 
-func TestLoadConfigFile(t *testing.T) {
-	// Create a temporary home directory with a config file
+func TestLoadFile(t *testing.T) {
 	tmpHome := t.TempDir()
 	configDir := filepath.Join(tmpHome, ".config", "ynab-mcp")
 	if err := os.MkdirAll(configDir, 0700); err != nil {
@@ -27,17 +26,12 @@ NO_EQUALS_SIGN
 		t.Fatal(err)
 	}
 
-	// Override HOME so loadConfigFile finds our temp config
-	origHome := os.Getenv("HOME")
 	t.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
-
-	// Clear any existing values
 	for _, key := range []string{"YNAB_API_TOKEN", "YNAB_BUDGET_ID", "EMPTY_LINE_ABOVE", "SPACES_AROUND", "SINGLE_QUOTED"} {
 		t.Setenv(key, "")
 	}
 
-	loadConfigFile()
+	LoadFile()
 
 	tests := []struct {
 		key  string
@@ -56,7 +50,7 @@ NO_EQUALS_SIGN
 	}
 }
 
-func TestLoadConfigFile_EnvVarTakesPrecedence(t *testing.T) {
+func TestLoadFileEnvVarTakesPrecedence(t *testing.T) {
 	tmpHome := t.TempDir()
 	configDir := filepath.Join(tmpHome, ".config", "ynab-mcp")
 	if err := os.MkdirAll(configDir, 0700); err != nil {
@@ -66,25 +60,17 @@ func TestLoadConfigFile_EnvVarTakesPrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	origHome := os.Getenv("HOME")
 	t.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
-
 	t.Setenv("YNAB_API_TOKEN", "from-env")
 
-	loadConfigFile()
+	LoadFile()
 
 	if got := os.Getenv("YNAB_API_TOKEN"); got != "from-env" {
-		t.Errorf("YNAB_API_TOKEN = %q, want %q (env should take precedence)", got, "from-env")
+		t.Errorf("YNAB_API_TOKEN = %q, want %q", got, "from-env")
 	}
 }
 
-func TestLoadConfigFile_MissingFile(t *testing.T) {
-	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
-
-	// Should not panic or error when file doesn't exist
-	loadConfigFile()
+func TestLoadFileMissingFile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	LoadFile()
 }

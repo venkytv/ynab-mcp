@@ -49,7 +49,7 @@ type rawResponse struct {
 	Error *APIError       `json:"error"`
 }
 
-func (c *Client) doRequest(ctx context.Context, method, path string, query url.Values, body any, result any) error {
+func (c *Client) request(ctx context.Context, method, path string, query url.Values, body any) ([]byte, json.RawMessage, error) {
 	u := c.baseURL + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()
@@ -59,14 +59,14 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("marshaling request body: %w", err)
+			return nil, nil, fmt.Errorf("marshaling request body: %w", err)
 		}
 		bodyReader = bytes.NewReader(b)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, u, bodyReader)
 	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
+		return nil, nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	if body != nil {
@@ -75,17 +75,17 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
+		return nil, nil, fmt.Errorf("executing request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("reading response body: %w", err)
+		return nil, nil, fmt.Errorf("reading response body: %w", err)
 	}
 
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return &APIError{
+		return nil, nil, &APIError{
 			ID:     "429",
 			Name:   "too_many_requests",
 			Detail: "YNAB API rate limit exceeded (200 requests/hour). Please wait before making more requests.",
@@ -94,21 +94,34 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 
 	var raw rawResponse
 	if err := json.Unmarshal(respBody, &raw); err != nil {
-		return fmt.Errorf("status %d: failed to parse response: %w", resp.StatusCode, err)
+		return nil, nil, fmt.Errorf("status %d: failed to parse response: %w", resp.StatusCode, err)
 	}
 	if raw.Error != nil {
-		return raw.Error
+		return nil, nil, raw.Error
 	}
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("YNAB API returned status %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("YNAB API returned status %d", resp.StatusCode)
 	}
 
-	if result != nil && raw.Data != nil {
-		if err := json.Unmarshal(raw.Data, result); err != nil {
+	return respBody, raw.Data, nil
+}
+
+func (c *Client) doRequest(ctx context.Context, method, path string, query url.Values, body any, result any) error {
+	_, data, err := c.request(ctx, method, path, query, body)
+	if err != nil {
+		return err
+	}
+	if result != nil && data != nil {
+		if err := json.Unmarshal(data, result); err != nil {
 			return fmt.Errorf("unmarshaling response data: %w", err)
 		}
 	}
 	return nil
+}
+
+func (c *Client) getRaw(ctx context.Context, path string, query url.Values) ([]byte, error) {
+	body, _, err := c.request(ctx, http.MethodGet, path, query, nil)
+	return body, err
 }
 
 func (c *Client) get(ctx context.Context, path string, query url.Values, result any) error {
@@ -125,12 +138,20 @@ func (c *Client) put(ctx context.Context, path string, body any, result any) err
 
 // --- Budgets ---
 
+func (c *Client) RawListBudgets(ctx context.Context) ([]byte, error) {
+	return c.getRaw(ctx, "/budgets", nil)
+}
+
 func (c *Client) ListBudgets(ctx context.Context) ([]BudgetSummary, error) {
 	var data BudgetListData
 	if err := c.get(ctx, "/budgets", nil, &data); err != nil {
 		return nil, err
 	}
 	return data.Budgets, nil
+}
+
+func (c *Client) RawGetBudget(ctx context.Context, budgetID string) ([]byte, error) {
+	return c.getRaw(ctx, "/budgets/"+budgetID, nil)
 }
 
 func (c *Client) GetBudget(ctx context.Context, budgetID string) (*BudgetSummary, error) {
@@ -143,6 +164,10 @@ func (c *Client) GetBudget(ctx context.Context, budgetID string) (*BudgetSummary
 
 // --- Accounts ---
 
+func (c *Client) RawListAccounts(ctx context.Context, budgetID string) ([]byte, error) {
+	return c.getRaw(ctx, "/budgets/"+budgetID+"/accounts", nil)
+}
+
 func (c *Client) ListAccounts(ctx context.Context, budgetID string) ([]Account, error) {
 	var data AccountListData
 	if err := c.get(ctx, "/budgets/"+budgetID+"/accounts", nil, &data); err != nil {
@@ -152,6 +177,10 @@ func (c *Client) ListAccounts(ctx context.Context, budgetID string) ([]Account, 
 }
 
 // --- Categories ---
+
+func (c *Client) RawListCategories(ctx context.Context, budgetID string) ([]byte, error) {
+	return c.getRaw(ctx, "/budgets/"+budgetID+"/categories", nil)
+}
 
 func (c *Client) ListCategories(ctx context.Context, budgetID string) ([]CategoryGroup, error) {
 	var data CategoryListData
@@ -163,6 +192,10 @@ func (c *Client) ListCategories(ctx context.Context, budgetID string) ([]Categor
 
 // --- Payees ---
 
+func (c *Client) RawListPayees(ctx context.Context, budgetID string) ([]byte, error) {
+	return c.getRaw(ctx, "/budgets/"+budgetID+"/payees", nil)
+}
+
 func (c *Client) ListPayees(ctx context.Context, budgetID string) ([]Payee, error) {
 	var data PayeeListData
 	if err := c.get(ctx, "/budgets/"+budgetID+"/payees", nil, &data); err != nil {
@@ -173,7 +206,7 @@ func (c *Client) ListPayees(ctx context.Context, budgetID string) ([]Payee, erro
 
 // --- Transactions ---
 
-func (c *Client) ListTransactions(ctx context.Context, budgetID string, opts *ListTransactionsOptions) ([]TransactionDetail, error) {
+func listTransactionsRequest(budgetID string, opts *ListTransactionsOptions) (string, url.Values) {
 	path := "/budgets/" + budgetID
 	if opts != nil {
 		switch {
@@ -195,16 +228,32 @@ func (c *Client) ListTransactions(ctx context.Context, budgetID string, opts *Li
 		if opts.SinceDate != "" {
 			query.Set("since_date", opts.SinceDate)
 		}
+		if opts.UntilDate != "" {
+			query.Set("until_date", opts.UntilDate)
+		}
 		if opts.Type != "" {
 			query.Set("type", opts.Type)
 		}
 	}
+	return path, query
+}
 
+func (c *Client) RawListTransactions(ctx context.Context, budgetID string, opts *ListTransactionsOptions) ([]byte, error) {
+	path, query := listTransactionsRequest(budgetID, opts)
+	return c.getRaw(ctx, path, query)
+}
+
+func (c *Client) ListTransactions(ctx context.Context, budgetID string, opts *ListTransactionsOptions) ([]TransactionDetail, error) {
+	path, query := listTransactionsRequest(budgetID, opts)
 	var data TransactionListData
 	if err := c.get(ctx, path, query, &data); err != nil {
 		return nil, err
 	}
 	return data.Transactions, nil
+}
+
+func (c *Client) RawGetTransaction(ctx context.Context, budgetID, transactionID string) ([]byte, error) {
+	return c.getRaw(ctx, "/budgets/"+budgetID+"/transactions/"+transactionID, nil)
 }
 
 func (c *Client) GetTransaction(ctx context.Context, budgetID, transactionID string) (*TransactionDetail, error) {
@@ -234,6 +283,10 @@ func (c *Client) UpdateTransaction(ctx context.Context, budgetID, transactionID 
 }
 
 // --- Months ---
+
+func (c *Client) RawGetMonth(ctx context.Context, budgetID, month string) ([]byte, error) {
+	return c.getRaw(ctx, "/budgets/"+budgetID+"/months/"+month, nil)
+}
 
 func (c *Client) GetMonth(ctx context.Context, budgetID, month string) (*MonthDetail, error) {
 	var data MonthDetailData

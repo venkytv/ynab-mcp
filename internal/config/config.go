@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"bufio"
@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-// loadConfigFile reads key=value pairs from ~/.config/ynab-mcp/config
-// and sets them as environment variables. Existing env vars take precedence.
-func loadConfigFile() {
+// LoadFile reads key=value pairs from ~/.config/ynab-mcp/config and sets them
+// as environment variables. Existing environment variables take precedence.
+func LoadFile() {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
@@ -33,11 +33,9 @@ func loadConfigFile() {
 		}
 		key = strings.TrimSpace(key)
 		val = strings.TrimSpace(val)
-		// Strip surrounding quotes
 		if len(val) >= 2 && (val[0] == '"' || val[0] == '\'') && val[len(val)-1] == val[0] {
 			val = val[1 : len(val)-1]
 		}
-		// Don't override existing env vars
 		if os.Getenv(key) == "" {
 			os.Setenv(key, val)
 		}
