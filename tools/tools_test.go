@@ -150,7 +150,10 @@ func TestListBudgetsTool(t *testing.T) {
 
 func TestListTransactionsTool(t *testing.T) {
 	env := setupTestEnv(t)
-	env.mux.HandleFunc("/budgets/test-budget/transactions", func(w http.ResponseWriter, r *http.Request) {
+	var gotSinceDate, gotUntilDate string
+	env.mux.HandleFunc("/budgets/test-budget/accounts/a1/transactions", func(w http.ResponseWriter, r *http.Request) {
+		gotSinceDate = r.URL.Query().Get("since_date")
+		gotUntilDate = r.URL.Query().Get("until_date")
 		w.Header().Set("Content-Type", "application/json")
 		payee := "Coffee Shop"
 		cat := "Dining Out"
@@ -163,6 +166,21 @@ func TestListTransactionsTool(t *testing.T) {
 						"payee_name": payee, "category_name": cat,
 						"cleared": "cleared", "approved": true,
 					},
+					{
+						"id": "too-old", "date": "2024-02-29", "amount": -1000,
+						"account_id": "a1", "account_name": "Checking",
+						"payee_name": "Old transaction", "cleared": "cleared", "approved": true,
+					},
+					{
+						"id": "too-new", "date": "2024-04-01", "amount": -2000,
+						"account_id": "a1", "account_name": "Checking",
+						"payee_name": "Future transaction", "cleared": "cleared", "approved": true,
+					},
+					{
+						"id": "wrong-account", "date": "2024-03-20", "amount": -3000,
+						"account_id": "a2", "account_name": "Savings",
+						"payee_name": "Other account", "cleared": "cleared", "approved": true,
+					},
 				},
 			},
 		})
@@ -170,6 +188,8 @@ func TestListTransactionsTool(t *testing.T) {
 
 	result := callTool(t, env, "list_transactions", map[string]any{
 		"since_date": "2024-03-01",
+		"until_date": "2024-03-31",
+		"account_id": "a1",
 	})
 	text := toolText(t, result)
 
@@ -181,6 +201,57 @@ func TestListTransactionsTool(t *testing.T) {
 	}
 	if !strings.Contains(text, "2024-03-15") {
 		t.Errorf("missing date in output: %s", text)
+	}
+	for _, unexpected := range []string{"Old transaction", "Future transaction", "Other account"} {
+		if strings.Contains(text, unexpected) {
+			t.Errorf("unexpected %q in output: %s", unexpected, text)
+		}
+	}
+	if !strings.Contains(text, "discarded 3 out-of-scope transaction(s)") {
+		t.Errorf("missing defensive filter note: %s", text)
+	}
+	if !strings.Contains(text, "Total: 1 transactions") {
+		t.Errorf("wrong filtered total: %s", text)
+	}
+	if gotSinceDate != "2024-03-01" {
+		t.Errorf("since_date = %q, want 2024-03-01", gotSinceDate)
+	}
+	if gotUntilDate != "2024-03-31" {
+		t.Errorf("until_date = %q, want 2024-03-31", gotUntilDate)
+	}
+}
+
+func TestListTransactionsTool_AllOutOfScope(t *testing.T) {
+	env := setupTestEnv(t)
+	env.mux.HandleFunc("/budgets/test-budget/accounts/a1/transactions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"transactions": []map[string]any{
+					{
+						"id": "wrong-account", "date": "2024-03-15", "amount": -3000,
+						"account_id": "a2", "account_name": "Savings",
+						"payee_name": "Other account", "cleared": "cleared", "approved": true,
+					},
+				},
+			},
+		})
+	})
+
+	result := callTool(t, env, "list_transactions", map[string]any{
+		"since_date": "2024-03-01",
+		"account_id": "a1",
+	})
+	text := toolText(t, result)
+
+	if !strings.Contains(text, "No transactions found.") {
+		t.Errorf("missing empty result: %s", text)
+	}
+	if !strings.Contains(text, "discarded 1 out-of-scope transaction(s)") {
+		t.Errorf("missing defensive filter note: %s", text)
+	}
+	if strings.Contains(text, "Other account") {
+		t.Errorf("unexpected transaction in output: %s", text)
 	}
 }
 

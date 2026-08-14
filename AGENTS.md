@@ -43,4 +43,4 @@ go test ./...
 - Base URL: `https://api.ynab.com/v1`
 - Auth: Bearer token via `YNAB_API_TOKEN`
 - Rate limit: 200 requests/hour
-- `list_transactions` filters by path (account/category/payee) and query params (`since_date`, `type`). The `type` param supports `uncategorized` and `unapproved` only — there is no server-side filter for cleared status.
+- `list_transactions` filters by path (account/category/payee) and query params (`since_date`, `until_date`, `type`). The date bounds are inclusive. The `type` param supports `uncategorized` and `unapproved` only — there is no server-side filter for cleared status.

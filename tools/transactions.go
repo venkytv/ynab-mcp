@@ -12,6 +12,7 @@ import (
 type ListTransactionsInput struct {
 	BudgetID   string `json:"budget_id,omitempty" jsonschema:"budget ID; uses configured default if omitted"`
 	SinceDate  string `json:"since_date,omitempty" jsonschema:"only return transactions on or after this date (YYYY-MM-DD); recommended to always provide"`
+	UntilDate  string `json:"until_date,omitempty" jsonschema:"only return transactions on or before this date (YYYY-MM-DD)"`
 	Type       string `json:"type,omitempty" jsonschema:"filter: 'uncategorized' or 'unapproved'"`
 	AccountID  string `json:"account_id,omitempty" jsonschema:"filter by account ID"`
 	CategoryID string `json:"category_id,omitempty" jsonschema:"filter by category ID"`
@@ -65,13 +66,14 @@ type SubTransactionInput struct {
 func registerTransactionTools(server *mcp.Server, client *ynab.Client) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_transactions",
-		Description: "List transactions with optional filters. Provide since_date to limit results. Use type='uncategorized' to find transactions needing categorization, or type='unapproved' for pending transactions.",
+		Description: "List transactions with optional filters. Provide since_date and until_date to limit results. Use type='uncategorized' to find transactions needing categorization, or type='unapproved' for pending transactions.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ListTransactionsInput) (*mcp.CallToolResult, any, error) {
 		bid := resolveBudgetID(input.BudgetID, client)
 		cf, _ := getCurrencyFormat(ctx, client, bid)
 
 		opts := &ynab.ListTransactionsOptions{
 			SinceDate:  input.SinceDate,
+			UntilDate:  input.UntilDate,
 			Type:       input.Type,
 			AccountID:  input.AccountID,
 			CategoryID: input.CategoryID,
@@ -81,8 +83,9 @@ func registerTransactionTools(server *mcp.Server, client *ynab.Client) {
 		if err != nil {
 			return errorResult(err), nil, nil
 		}
+		txns, discarded := filterTransactionScope(txns, input)
 		if len(txns) == 0 {
-			return textResult("No transactions found."), nil, nil
+			return textResult(noTransactionsText(discarded)), nil, nil
 		}
 		var sb strings.Builder
 		const maxDisplay = 100
@@ -93,6 +96,7 @@ func registerTransactionTools(server *mcp.Server, client *ynab.Client) {
 			}
 			formatTransaction(&sb, &t, cf)
 		}
+		writeDiscardedTransactionsNote(&sb, discarded)
 		fmt.Fprintf(&sb, "\nTotal: %d transactions\n", len(txns))
 		return textResult(sb.String()), nil, nil
 	})
@@ -232,6 +236,44 @@ func registerTransactionTools(server *mcp.Server, client *ynab.Client) {
 		formatTransactionDetail(&sb, updated, cf)
 		return textResult(sb.String()), nil, nil
 	})
+}
+
+func filterTransactionScope(txns []ynab.TransactionDetail, input ListTransactionsInput) ([]ynab.TransactionDetail, int) {
+	filtered := make([]ynab.TransactionDetail, 0, len(txns))
+	for _, txn := range txns {
+		if input.SinceDate != "" && txn.Date < input.SinceDate {
+			continue
+		}
+		if input.UntilDate != "" && txn.Date > input.UntilDate {
+			continue
+		}
+		if input.AccountID != "" && txn.AccountID != input.AccountID {
+			continue
+		}
+		filtered = append(filtered, txn)
+	}
+	return filtered, len(txns) - len(filtered)
+}
+
+func noTransactionsText(discarded int) string {
+	if discarded == 0 {
+		return "No transactions found."
+	}
+	return fmt.Sprintf(
+		"No transactions found.\n\nDefensive filter: discarded %d out-of-scope transaction(s) returned by YNAB.",
+		discarded,
+	)
+}
+
+func writeDiscardedTransactionsNote(sb *strings.Builder, discarded int) {
+	if discarded == 0 {
+		return
+	}
+	fmt.Fprintf(
+		sb,
+		"\nDefensive filter: discarded %d out-of-scope transaction(s) returned by YNAB.\n",
+		discarded,
+	)
 }
 
 func buildSaveSubTransactions(inputs []SubTransactionInput, parentAmount int64) ([]ynab.SaveSubTransaction, error) {
