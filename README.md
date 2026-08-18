@@ -107,11 +107,16 @@ Add to your `claude_desktop_config.json`:
 | `list_accounts` | Accounts with balances |
 | `list_categories` | Category groups with budgeted/activity/balance |
 | `list_payees` | Known payees |
-| `list_transactions` | Transactions with filters (date, account, category, payee, type) |
+| `list_transactions` | Bounded transactions requiring `since_date`, with optional upper date, account, category, payee, and type filters |
 | `get_transaction` | Single transaction detail |
 | `create_transaction` | Create a new transaction, including split transactions |
 | `update_transaction` | Update/categorize a transaction, including converting to a split |
 | `get_month_summary` | Monthly budget overview with per-category breakdown |
+
+The MCP `list_transactions` tool is bounded-only: every call must include a
+non-empty `since_date`. This MCP safety requirement does not change the
+lower-level YNAB client or the read-only CLI, whose transaction date flags
+remain optional.
 
 ## Testing
 

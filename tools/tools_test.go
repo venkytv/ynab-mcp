@@ -3,9 +3,11 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +22,7 @@ type testEnv struct {
 	// captured request bodies keyed by "METHOD path"
 	bodies   map[string][]byte
 	bodiesMu sync.Mutex
+	requests int
 }
 
 func setupTestEnv(t *testing.T) *testEnv {
@@ -57,7 +60,12 @@ func setupTestEnv(t *testing.T) *testEnv {
 		})
 	})
 
-	ts := httptest.NewServer(env.mux)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		env.bodiesMu.Lock()
+		env.requests++
+		env.bodiesMu.Unlock()
+		env.mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(ts.Close)
 
 	client := ynab.NewClient("test-token", "test-budget", ynab.WithBaseURL(ts.URL))
@@ -96,6 +104,12 @@ func (e *testEnv) captureBody(r *http.Request) {
 	e.bodiesMu.Unlock()
 }
 
+func (e *testEnv) requestCount() int {
+	e.bodiesMu.Lock()
+	defer e.bodiesMu.Unlock()
+	return e.requests
+}
+
 func callTool(t *testing.T, env *testEnv, name string, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
 	result, err := env.session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -118,6 +132,22 @@ func toolText(t *testing.T, result *mcp.CallToolResult) string {
 		t.Fatalf("content type = %T, want *mcp.TextContent", result.Content[0])
 	}
 	return tc.Text
+}
+
+func transactionMetadata(t *testing.T, result *mcp.CallToolResult) ListTransactionsOutput {
+	t.Helper()
+	if result.StructuredContent == nil {
+		t.Fatal("no structured content in result")
+	}
+	data, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal structured content: %v", err)
+	}
+	var output ListTransactionsOutput
+	if err := json.Unmarshal(data, &output); err != nil {
+		t.Fatalf("unmarshal structured content: %v", err)
+	}
+	return output
 }
 
 func TestListBudgetsTool(t *testing.T) {
@@ -192,7 +222,26 @@ func TestListTransactionsTool(t *testing.T) {
 		"account_id": "a1",
 	})
 	text := toolText(t, result)
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", text)
+	}
 
+	if !strings.HasPrefix(text, "Query scope:\n") {
+		t.Errorf("scope is not prepended to output: %s", text)
+	}
+	for _, scopeLine := range []string{
+		"- budget_id: test-budget",
+		"- since_date: 2024-03-01",
+		"- until_date: 2024-03-31",
+		"- type: not set",
+		"- account_id: a1",
+		"- category_id: not set",
+		"- payee_id: not set",
+	} {
+		if !strings.Contains(text, scopeLine) {
+			t.Errorf("missing scope line %q in output: %s", scopeLine, text)
+		}
+	}
 	if !strings.Contains(text, "Coffee Shop") {
 		t.Errorf("missing payee in output: %s", text)
 	}
@@ -218,6 +267,57 @@ func TestListTransactionsTool(t *testing.T) {
 	}
 	if gotUntilDate != "2024-03-31" {
 		t.Errorf("until_date = %q, want 2024-03-31", gotUntilDate)
+	}
+
+	wantOutput := ListTransactionsOutput{
+		Query: ListTransactionsQuery{
+			BudgetID:  "test-budget",
+			SinceDate: "2024-03-01",
+			UntilDate: optionalString("2024-03-31"),
+			AccountID: optionalString("a1"),
+		},
+		Total:               1,
+		Returned:            1,
+		Truncated:           false,
+		DiscardedOutOfScope: 3,
+	}
+	if got := transactionMetadata(t, result); !reflect.DeepEqual(got, wantOutput) {
+		t.Errorf("structured output = %#v, want %#v", got, wantOutput)
+	}
+}
+
+func TestListTransactionsTool_RejectsUnboundedQueries(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      map[string]any
+		wantError string
+	}{
+		{name: "absent arguments", args: nil, wantError: "since_date"},
+		{name: "empty object", args: map[string]any{}, wantError: "since_date"},
+		{name: "unbounded candidate", args: map[string]any{"allow_unbounded": true}, wantError: "additional properties"},
+		{name: "blank date", args: map[string]any{"since_date": ""}, wantError: "no YNAB request was made"},
+		{name: "whitespace date", args: map[string]any{"since_date": " \t\n "}, wantError: "retry with a non-empty since_date"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupTestEnv(t)
+			result := callTool(t, env, "list_transactions", tt.args)
+			text := toolText(t, result)
+
+			if !result.IsError {
+				t.Fatalf("expected IsError=true, got: %s", text)
+			}
+			if !strings.Contains(text, tt.wantError) {
+				t.Errorf("error text = %q, want containing %q", text, tt.wantError)
+			}
+			if got := env.requestCount(); got != 0 {
+				t.Errorf("YNAB requests = %d, want 0", got)
+			}
+			if result.StructuredContent != nil {
+				t.Errorf("error structured content = %#v, want nil", result.StructuredContent)
+			}
+		})
 	}
 }
 
@@ -253,6 +353,18 @@ func TestListTransactionsTool_AllOutOfScope(t *testing.T) {
 	if strings.Contains(text, "Other account") {
 		t.Errorf("unexpected transaction in output: %s", text)
 	}
+
+	wantOutput := ListTransactionsOutput{
+		Query: ListTransactionsQuery{
+			BudgetID:  "test-budget",
+			SinceDate: "2024-03-01",
+			AccountID: optionalString("a1"),
+		},
+		DiscardedOutOfScope: 1,
+	}
+	if got := transactionMetadata(t, result); !reflect.DeepEqual(got, wantOutput) {
+		t.Errorf("structured output = %#v, want %#v", got, wantOutput)
+	}
 }
 
 func TestListTransactionsTool_Uncategorized(t *testing.T) {
@@ -267,11 +379,106 @@ func TestListTransactionsTool_Uncategorized(t *testing.T) {
 	})
 
 	callTool(t, env, "list_transactions", map[string]any{
-		"type": "uncategorized",
+		"since_date": "2024-01-01",
+		"type":       "uncategorized",
 	})
 
 	if gotType != "uncategorized" {
 		t.Errorf("type query param = %q, want uncategorized", gotType)
+	}
+}
+
+func TestListTransactionsTool_EmptyMetadata(t *testing.T) {
+	env := setupTestEnv(t)
+	env.mux.HandleFunc("/budgets/test-budget/transactions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"transactions": []any{}},
+		})
+	})
+
+	result := callTool(t, env, "list_transactions", map[string]any{
+		"since_date": "2024-01-01",
+	})
+	text := toolText(t, result)
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", text)
+	}
+	if !strings.Contains(text, "No transactions found.") {
+		t.Errorf("missing empty result: %s", text)
+	}
+	for _, scopeLine := range []string{
+		"- until_date: not set",
+		"- type: not set",
+		"- account_id: not set",
+		"- category_id: not set",
+		"- payee_id: not set",
+	} {
+		if !strings.Contains(text, scopeLine) {
+			t.Errorf("missing scope line %q in output: %s", scopeLine, text)
+		}
+	}
+
+	wantOutput := ListTransactionsOutput{
+		Query: ListTransactionsQuery{
+			BudgetID:  "test-budget",
+			SinceDate: "2024-01-01",
+		},
+	}
+	if got := transactionMetadata(t, result); !reflect.DeepEqual(got, wantOutput) {
+		t.Errorf("structured output = %#v, want %#v", got, wantOutput)
+	}
+}
+
+func TestListTransactionsTool_DisplayLimitMetadata(t *testing.T) {
+	for _, total := range []int{100, 101} {
+		t.Run(fmt.Sprintf("%d rows", total), func(t *testing.T) {
+			env := setupTestEnv(t)
+			env.mux.HandleFunc("/budgets/test-budget/transactions", func(w http.ResponseWriter, r *http.Request) {
+				transactions := make([]map[string]any, 0, total)
+				for i := range total {
+					transactions = append(transactions, map[string]any{
+						"id":           fmt.Sprintf("txn-%03d", i),
+						"date":         "2024-03-15",
+						"amount":       -1000,
+						"account_id":   "a1",
+						"account_name": "Checking",
+						"cleared":      "cleared",
+						"approved":     true,
+					})
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{
+					"data": map[string]any{"transactions": transactions},
+				})
+			})
+
+			result := callTool(t, env, "list_transactions", map[string]any{
+				"since_date": "2024-03-01",
+			})
+			text := toolText(t, result)
+			if result.IsError {
+				t.Fatalf("unexpected error: %s", text)
+			}
+
+			wantReturned := min(total, 100)
+			if got := strings.Count(text, "\n  ID: txn-"); got != wantReturned {
+				t.Errorf("text transaction rows = %d, want %d", got, wantReturned)
+			}
+			output := transactionMetadata(t, result)
+			if output.Total != total || output.Returned != wantReturned {
+				t.Errorf("total/returned = %d/%d, want %d/%d", output.Total, output.Returned, total, wantReturned)
+			}
+			if output.Truncated != (total > 100) {
+				t.Errorf("truncated = %v, want %v", output.Truncated, total > 100)
+			}
+			if output.DiscardedOutOfScope != 0 {
+				t.Errorf("discarded_out_of_scope = %d, want 0", output.DiscardedOutOfScope)
+			}
+			if total == 101 && !strings.Contains(text, "... and 1 more transactions") {
+				t.Errorf("missing truncation note: %s", text)
+			}
+		})
 	}
 }
 

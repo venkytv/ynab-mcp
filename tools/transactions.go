@@ -5,18 +5,37 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/venky/ynab-mcp/ynab"
 )
 
 type ListTransactionsInput struct {
 	BudgetID   string `json:"budget_id,omitempty" jsonschema:"budget ID; uses configured default if omitted"`
-	SinceDate  string `json:"since_date,omitempty" jsonschema:"only return transactions on or after this date (YYYY-MM-DD); recommended to always provide"`
+	SinceDate  string `json:"since_date" jsonschema:"required lower bound; only return transactions on or after this date (YYYY-MM-DD)"`
 	UntilDate  string `json:"until_date,omitempty" jsonschema:"only return transactions on or before this date (YYYY-MM-DD)"`
 	Type       string `json:"type,omitempty" jsonschema:"filter: 'uncategorized' or 'unapproved'"`
 	AccountID  string `json:"account_id,omitempty" jsonschema:"filter by account ID"`
 	CategoryID string `json:"category_id,omitempty" jsonschema:"filter by category ID"`
 	PayeeID    string `json:"payee_id,omitempty" jsonschema:"filter by payee ID"`
+}
+
+type ListTransactionsOutput struct {
+	Query               ListTransactionsQuery `json:"query" jsonschema:"effective bounded query scope"`
+	Total               int                   `json:"total" jsonschema:"transactions remaining after defensive filtering"`
+	Returned            int                   `json:"returned" jsonschema:"transaction rows included in text, capped at 100"`
+	Truncated           bool                  `json:"truncated" jsonschema:"whether the text omits in-scope transaction rows"`
+	DiscardedOutOfScope int                   `json:"discarded_out_of_scope" jsonschema:"transactions removed by defensive filtering"`
+}
+
+type ListTransactionsQuery struct {
+	BudgetID   string  `json:"budget_id"`
+	SinceDate  string  `json:"since_date"`
+	UntilDate  *string `json:"until_date"`
+	Type       *string `json:"type"`
+	AccountID  *string `json:"account_id"`
+	CategoryID *string `json:"category_id"`
+	PayeeID    *string `json:"payee_id"`
 }
 
 type GetTransactionInput struct {
@@ -64,10 +83,20 @@ type SubTransactionInput struct {
 }
 
 func registerTransactionTools(server *mcp.Server, client *ynab.Client) {
+	outputSchema, err := jsonschema.For[ListTransactionsOutput](nil)
+	if err != nil {
+		panic(fmt.Sprintf("list_transactions output schema: %v", err))
+	}
+
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "list_transactions",
-		Description: "List transactions with optional filters. Provide since_date and until_date to limit results. Use type='uncategorized' to find transactions needing categorization, or type='unapproved' for pending transactions.",
+		Name:         "list_transactions",
+		Description:  "List transactions using a required since_date lower bound. This tool does not support unbounded queries. Optional filters include until_date, account_id, category_id, payee_id, and type ('uncategorized' or 'unapproved').",
+		OutputSchema: outputSchema,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ListTransactionsInput) (*mcp.CallToolResult, any, error) {
+		if strings.TrimSpace(input.SinceDate) == "" {
+			return errorResult(fmt.Errorf("since_date must be a non-empty date (YYYY-MM-DD); no YNAB request was made; retry with a non-empty since_date")), nil, nil
+		}
+
 		bid := resolveBudgetID(input.BudgetID, client)
 		cf, _ := getCurrencyFormat(ctx, client, bid)
 
@@ -84,10 +113,14 @@ func registerTransactionTools(server *mcp.Server, client *ynab.Client) {
 			return errorResult(err), nil, nil
 		}
 		txns, discarded := filterTransactionScope(txns, input)
-		if len(txns) == 0 {
-			return textResult(noTransactionsText(discarded)), nil, nil
-		}
+		output := listTransactionsOutput(bid, input, len(txns), discarded)
+
 		var sb strings.Builder
+		writeTransactionQueryScope(&sb, output.Query)
+		if len(txns) == 0 {
+			sb.WriteString(noTransactionsText(discarded))
+			return textResult(sb.String()), output, nil
+		}
 		const maxDisplay = 100
 		for i, t := range txns {
 			if i >= maxDisplay {
@@ -98,7 +131,7 @@ func registerTransactionTools(server *mcp.Server, client *ynab.Client) {
 		}
 		writeDiscardedTransactionsNote(&sb, discarded)
 		fmt.Fprintf(&sb, "\nTotal: %d transactions\n", len(txns))
-		return textResult(sb.String()), nil, nil
+		return textResult(sb.String()), output, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -236,6 +269,51 @@ func registerTransactionTools(server *mcp.Server, client *ynab.Client) {
 		formatTransactionDetail(&sb, updated, cf)
 		return textResult(sb.String()), nil, nil
 	})
+}
+
+func listTransactionsOutput(budgetID string, input ListTransactionsInput, total, discarded int) ListTransactionsOutput {
+	const maxDisplay = 100
+	returned := min(total, maxDisplay)
+	return ListTransactionsOutput{
+		Query: ListTransactionsQuery{
+			BudgetID:   budgetID,
+			SinceDate:  input.SinceDate,
+			UntilDate:  optionalString(input.UntilDate),
+			Type:       optionalString(input.Type),
+			AccountID:  optionalString(input.AccountID),
+			CategoryID: optionalString(input.CategoryID),
+			PayeeID:    optionalString(input.PayeeID),
+		},
+		Total:               total,
+		Returned:            returned,
+		Truncated:           total > returned,
+		DiscardedOutOfScope: discarded,
+	}
+}
+
+func writeTransactionQueryScope(sb *strings.Builder, query ListTransactionsQuery) {
+	sb.WriteString("Query scope:\n")
+	fmt.Fprintf(sb, "- budget_id: %s\n", query.BudgetID)
+	fmt.Fprintf(sb, "- since_date: %s\n", query.SinceDate)
+	fmt.Fprintf(sb, "- until_date: %s\n", queryScopeValue(query.UntilDate))
+	fmt.Fprintf(sb, "- type: %s\n", queryScopeValue(query.Type))
+	fmt.Fprintf(sb, "- account_id: %s\n", queryScopeValue(query.AccountID))
+	fmt.Fprintf(sb, "- category_id: %s\n", queryScopeValue(query.CategoryID))
+	fmt.Fprintf(sb, "- payee_id: %s\n\n", queryScopeValue(query.PayeeID))
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func queryScopeValue(value *string) string {
+	if value == nil {
+		return "not set"
+	}
+	return *value
 }
 
 func filterTransactionScope(txns []ynab.TransactionDetail, input ListTransactionsInput) ([]ynab.TransactionDetail, int) {
