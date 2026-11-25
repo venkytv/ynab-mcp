@@ -109,14 +109,43 @@ Add to your `claude_desktop_config.json`:
 | `list_payees` | Known payees |
 | `list_transactions` | Bounded transactions requiring `since_date`, with optional upper date, account, category, payee, and type filters |
 | `get_transaction` | Single transaction detail |
-| `create_transaction` | Create a new transaction, including split transactions |
-| `update_transaction` | Update/categorize a transaction, including converting to a split |
+| `create_transaction` | Create a transaction, split, or account transfer |
+| `update_transaction` | Edit a transaction or convert it to a split or account transfer |
 | `get_month_summary` | Monthly budget overview with per-category breakdown |
 
 The MCP `list_transactions` tool is bounded-only: every call must include a
 non-empty `since_date`. This MCP safety requirement does not change the
 lower-level YNAB client or the read-only CLI, whose transaction date flags
 remain optional.
+
+### Account transfers
+
+Use the other account's ID from `list_accounts` as `transfer_account_id`.
+Omit `payee_id` and `payee_name` when setting it. For a new transfer, a
+negative amount means money leaves `account_id`, and a positive amount means
+money enters it.
+
+This `create_transaction` request moves money from checking to savings.
+
+```json
+{"account_id": "checking-id", "transfer_account_id": "savings-id", "date": "2026-11-25", "amount": -50}
+```
+
+This `update_transaction` request converts an existing transaction to a transfer.
+
+```json
+{"transaction_id": "transaction-id", "transfer_account_id": "savings-id"}
+```
+
+If both accounts are on-budget or both are off-budget, the tool clears any
+existing category. For a transfer across the budget boundary, use `category_id`
+where YNAB requires a category. An update carries forward the existing category
+unless you supply a replacement.
+
+YNAB creates the linked entry in the other account. The tool shows the other
+account ID and linked transaction ID returned by YNAB. If a separate transaction
+has already imported in the other account, check that register and match it with
+the linked entry in YNAB if both appear. [YNAB transfer guide](https://support.ynab.com/transfer-transactions-a-guide-HJOsZz4Jj)
 
 ## Testing
 

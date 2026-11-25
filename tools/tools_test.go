@@ -671,6 +671,7 @@ func TestUpdateTransactionTool_PartialUpdate(t *testing.T) {
 	result := callTool(t, env, "update_transaction", map[string]any{
 		"transaction_id": "txn-1",
 		"category_id":    "new-cat",
+		"payee_id":       "new-payee",
 	})
 	text := toolText(t, result)
 
@@ -691,6 +692,7 @@ func TestUpdateTransactionTool_PartialUpdate(t *testing.T) {
 			AccountID  string  `json:"account_id"`
 			Amount     int64   `json:"amount"`
 			CategoryID *string `json:"category_id"`
+			PayeeID    *string `json:"payee_id"`
 			Memo       *string `json:"memo"`
 			Cleared    *string `json:"cleared"`
 		} `json:"transaction"`
@@ -706,6 +708,9 @@ func TestUpdateTransactionTool_PartialUpdate(t *testing.T) {
 	}
 	if wrapper.Transaction.CategoryID == nil || *wrapper.Transaction.CategoryID != "new-cat" {
 		t.Errorf("category_id = %v, want new-cat", wrapper.Transaction.CategoryID)
+	}
+	if deref(wrapper.Transaction.PayeeID) != "new-payee" {
+		t.Errorf("payee_id = %q, want new-payee", deref(wrapper.Transaction.PayeeID))
 	}
 	if wrapper.Transaction.Memo == nil || *wrapper.Transaction.Memo != "original memo" {
 		t.Errorf("memo = %v, want 'original memo'", wrapper.Transaction.Memo)

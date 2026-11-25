@@ -44,33 +44,35 @@ type GetTransactionInput struct {
 }
 
 type CreateTransactionInput struct {
-	BudgetID        string                `json:"budget_id,omitempty" jsonschema:"budget ID; uses configured default if omitted"`
-	AccountID       string                `json:"account_id" jsonschema:"the account ID for this transaction"`
-	Date            string                `json:"date" jsonschema:"transaction date (YYYY-MM-DD)"`
-	Amount          float64               `json:"amount" jsonschema:"amount in the budget currency (negative for outflow, positive for inflow, e.g. -10.50)"`
-	PayeeID         string                `json:"payee_id,omitempty" jsonschema:"payee ID"`
-	PayeeName       string                `json:"payee_name,omitempty" jsonschema:"payee name; creates a new payee if no match found"`
-	CategoryID      string                `json:"category_id,omitempty" jsonschema:"category ID; omit for split transactions and set category_id on each subtransaction instead"`
-	Memo            string                `json:"memo,omitempty" jsonschema:"transaction memo"`
-	Cleared         string                `json:"cleared,omitempty" jsonschema:"cleared status: 'cleared', 'uncleared', or 'reconciled'"`
-	Approved        *bool                 `json:"approved,omitempty" jsonschema:"whether the transaction is approved"`
-	FlagColor       string                `json:"flag_color,omitempty" jsonschema:"flag color: 'red', 'orange', 'yellow', 'green', 'blue', or 'purple'"`
-	SubTransactions []SubTransactionInput `json:"subtransactions,omitempty" jsonschema:"split lines; provide at least two and make their amounts add up to amount"`
+	BudgetID          string                `json:"budget_id,omitempty" jsonschema:"budget ID; uses configured default if omitted"`
+	AccountID         string                `json:"account_id" jsonschema:"the account ID for this transaction"`
+	Date              string                `json:"date" jsonschema:"transaction date (YYYY-MM-DD)"`
+	Amount            float64               `json:"amount" jsonschema:"amount in the budget currency (negative for outflow, positive for inflow, e.g. -10.50)"`
+	PayeeID           string                `json:"payee_id,omitempty" jsonschema:"payee ID"`
+	PayeeName         string                `json:"payee_name,omitempty" jsonschema:"payee name; creates a new payee if no match found"`
+	TransferAccountID *string               `json:"transfer_account_id,omitempty" jsonschema:"ID of the other account in the same budget, from list_accounts; omit payee_id and payee_name when set"`
+	CategoryID        string                `json:"category_id,omitempty" jsonschema:"category ID; omit for split transactions and set category_id on each subtransaction instead"`
+	Memo              string                `json:"memo,omitempty" jsonschema:"transaction memo"`
+	Cleared           string                `json:"cleared,omitempty" jsonschema:"cleared status: 'cleared', 'uncleared', or 'reconciled'"`
+	Approved          *bool                 `json:"approved,omitempty" jsonschema:"whether the transaction is approved"`
+	FlagColor         string                `json:"flag_color,omitempty" jsonschema:"flag color: 'red', 'orange', 'yellow', 'green', 'blue', or 'purple'"`
+	SubTransactions   []SubTransactionInput `json:"subtransactions,omitempty" jsonschema:"split lines; provide at least two and make their amounts add up to amount"`
 }
 
 type UpdateTransactionInput struct {
-	BudgetID        string                `json:"budget_id,omitempty" jsonschema:"budget ID; uses configured default if omitted"`
-	TransactionID   string                `json:"transaction_id" jsonschema:"the transaction ID to update"`
-	CategoryID      *string               `json:"category_id,omitempty" jsonschema:"new category ID; do not provide when setting subtransactions"`
-	PayeeID         *string               `json:"payee_id,omitempty" jsonschema:"new payee ID"`
-	PayeeName       *string               `json:"payee_name,omitempty" jsonschema:"new payee name"`
-	Memo            *string               `json:"memo,omitempty" jsonschema:"new memo"`
-	Amount          *float64              `json:"amount,omitempty" jsonschema:"new amount in the budget currency"`
-	Date            *string               `json:"date,omitempty" jsonschema:"new date (YYYY-MM-DD)"`
-	Cleared         *string               `json:"cleared,omitempty" jsonschema:"new cleared status: 'cleared', 'uncleared', or 'reconciled'"`
-	Approved        *bool                 `json:"approved,omitempty" jsonschema:"new approval status"`
-	FlagColor       *string               `json:"flag_color,omitempty" jsonschema:"new flag color: 'red', 'orange', 'yellow', 'green', 'blue', or 'purple'"`
-	SubTransactions []SubTransactionInput `json:"subtransactions,omitempty" jsonschema:"replacement split lines; provide at least two and make their amounts add up to the transaction amount"`
+	BudgetID          string                `json:"budget_id,omitempty" jsonschema:"budget ID; uses configured default if omitted"`
+	TransactionID     string                `json:"transaction_id" jsonschema:"the transaction ID to update"`
+	CategoryID        *string               `json:"category_id,omitempty" jsonschema:"new category ID; do not provide when setting subtransactions"`
+	PayeeID           *string               `json:"payee_id,omitempty" jsonschema:"new payee ID"`
+	PayeeName         *string               `json:"payee_name,omitempty" jsonschema:"new payee name"`
+	TransferAccountID *string               `json:"transfer_account_id,omitempty" jsonschema:"ID of the other account in the same budget, from list_accounts; omit payee_id and payee_name when set"`
+	Memo              *string               `json:"memo,omitempty" jsonschema:"new memo"`
+	Amount            *float64              `json:"amount,omitempty" jsonschema:"new amount in the budget currency"`
+	Date              *string               `json:"date,omitempty" jsonschema:"new date (YYYY-MM-DD)"`
+	Cleared           *string               `json:"cleared,omitempty" jsonschema:"new cleared status: 'cleared', 'uncleared', or 'reconciled'"`
+	Approved          *bool                 `json:"approved,omitempty" jsonschema:"new approval status"`
+	FlagColor         *string               `json:"flag_color,omitempty" jsonschema:"new flag color: 'red', 'orange', 'yellow', 'green', 'blue', or 'purple'"`
+	SubTransactions   []SubTransactionInput `json:"subtransactions,omitempty" jsonschema:"replacement split lines; provide at least two and make their amounts add up to the transaction amount"`
 }
 
 type SubTransactionInput struct {
@@ -152,7 +154,7 @@ func registerTransactionTools(server *mcp.Server, client *ynab.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "create_transaction",
-		Description: "Create a new transaction. Amount is in the budget's currency: negative for outflows (spending), positive for inflows (income). To create a split transaction, provide subtransactions with per-line category_id values whose amounts add up to amount.",
+		Description: "Create a new transaction. Amount is in the budget's currency: negative for money leaving account_id, positive for money entering it. To create a transfer, provide transfer_account_id for the other account. To create a split transaction, provide subtransactions with per-line category_id values whose amounts add up to amount.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input CreateTransactionInput) (*mcp.CallToolResult, any, error) {
 		bid := resolveBudgetID(input.BudgetID, client)
 		cf, _ := getCurrencyFormat(ctx, client, bid)
@@ -178,6 +180,11 @@ func registerTransactionTools(server *mcp.Server, client *ynab.Client) {
 			FlagColor:       strPtr(input.FlagColor),
 			SubTransactions: subtransactions,
 		}
+		if input.TransferAccountID != nil {
+			if err := setTransactionTransfer(ctx, client, bid, *input.TransferAccountID, &txn); err != nil {
+				return errorResult(err), nil, nil
+			}
+		}
 		created, err := client.CreateTransaction(ctx, bid, txn)
 		if err != nil {
 			return errorResult(err), nil, nil
@@ -190,7 +197,7 @@ func registerTransactionTools(server *mcp.Server, client *ynab.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "update_transaction",
-		Description: "Update an existing transaction. Use this to categorize transactions, change payees, edit memos, etc. Only provided fields are changed. To convert a transaction to a split, provide subtransactions with per-line category_id values whose amounts add up to the transaction amount.",
+		Description: "Update an existing transaction. To convert it to a transfer, provide transfer_account_id for the other account. If both accounts are on-budget or both are off-budget, the transfer clears the existing category. To convert to a split, provide subtransactions with per-line category_id values whose amounts add up to the transaction amount.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input UpdateTransactionInput) (*mcp.CallToolResult, any, error) {
 		bid := resolveBudgetID(input.BudgetID, client)
 		cf, _ := getCurrencyFormat(ctx, client, bid)
@@ -204,20 +211,14 @@ func registerTransactionTools(server *mcp.Server, client *ynab.Client) {
 			AccountID: existing.AccountID,
 			Date:      existing.Date,
 			Amount:    existing.Amount,
+			PayeeID:   input.PayeeID,
+			PayeeName: input.PayeeName,
 		}
 
 		if input.CategoryID != nil {
 			txn.CategoryID = input.CategoryID
 		} else {
 			txn.CategoryID = existing.CategoryID
-		}
-		if input.PayeeID != nil {
-			txn.PayeeID = input.PayeeID
-		} else {
-			txn.PayeeID = existing.PayeeID
-		}
-		if input.PayeeName != nil {
-			txn.PayeeName = input.PayeeName
 		}
 		if input.Memo != nil {
 			txn.Memo = input.Memo
@@ -260,6 +261,13 @@ func registerTransactionTools(server *mcp.Server, client *ynab.Client) {
 			txn.SubTransactions = existingSaveSubTransactions(existing.SubTransactions)
 		}
 
+		if input.TransferAccountID != nil {
+			if err := setTransactionTransfer(ctx, client, bid, *input.TransferAccountID, &txn); err != nil {
+				return errorResult(err), nil, nil
+			}
+		} else if txn.PayeeID == nil {
+			txn.PayeeID = existing.PayeeID
+		}
 		updated, err := client.UpdateTransaction(ctx, bid, input.TransactionID, txn)
 		if err != nil {
 			return errorResult(err), nil, nil
@@ -269,6 +277,48 @@ func registerTransactionTools(server *mcp.Server, client *ynab.Client) {
 		formatTransactionDetail(&sb, updated, cf)
 		return textResult(sb.String()), nil, nil
 	})
+}
+
+func setTransactionTransfer(ctx context.Context, client *ynab.Client, budgetID, transferAccountID string, txn *ynab.SaveTransaction) error {
+	if txn.PayeeID != nil || txn.PayeeName != nil {
+		return fmt.Errorf("transfer_account_id cannot be combined with payee_id or payee_name")
+	}
+	transferAccountID = strings.TrimSpace(transferAccountID)
+	if transferAccountID == "" {
+		return fmt.Errorf("transfer_account_id must be a non-empty account ID")
+	}
+	if transferAccountID == txn.AccountID {
+		return fmt.Errorf("transfer_account_id must differ from the transaction's account_id")
+	}
+
+	accounts, err := client.ListAccounts(ctx, budgetID)
+	if err != nil {
+		return fmt.Errorf("looking up transfer accounts: %w", err)
+	}
+	var account, otherAccount *ynab.Account
+	for i := range accounts {
+		switch accounts[i].ID {
+		case txn.AccountID:
+			account = &accounts[i]
+		case transferAccountID:
+			otherAccount = &accounts[i]
+		}
+	}
+	if account == nil || account.Deleted {
+		return fmt.Errorf("transaction account %q is unavailable in this budget", txn.AccountID)
+	}
+	if otherAccount == nil || otherAccount.Deleted {
+		return fmt.Errorf("transfer account %q is unavailable in this budget", transferAccountID)
+	}
+	if deref(otherAccount.TransferPayeeID) == "" {
+		return fmt.Errorf("transfer account %q has no transfer payee in YNAB", transferAccountID)
+	}
+
+	txn.PayeeID = otherAccount.TransferPayeeID
+	if account.OnBudget == otherAccount.OnBudget {
+		txn.CategoryID = nil
+	}
+	return nil
 }
 
 func listTransactionsOutput(budgetID string, input ListTransactionsInput, total, discarded int) ListTransactionsOutput {
@@ -429,6 +479,12 @@ func formatTransactionDetail(sb *strings.Builder, t *ynab.TransactionDetail, cf 
 	fmt.Fprintf(sb, "Amount: %s\n", ynab.FormatAmount(t.Amount, cf))
 	fmt.Fprintf(sb, "Account: %s\n", t.AccountName)
 	fmt.Fprintf(sb, "Payee: %s\n", deref(t.PayeeName))
+	if t.TransferAccountID != nil {
+		fmt.Fprintf(sb, "Transfer account ID: %s\n", *t.TransferAccountID)
+	}
+	if t.TransferTransactionID != nil {
+		fmt.Fprintf(sb, "Linked transaction ID: %s\n", *t.TransferTransactionID)
+	}
 	fmt.Fprintf(sb, "Category: %s\n", deref(t.CategoryName))
 	fmt.Fprintf(sb, "Memo: %s\n", deref(t.Memo))
 	fmt.Fprintf(sb, "Cleared: %s\n", t.Cleared)

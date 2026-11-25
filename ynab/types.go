@@ -35,6 +35,7 @@ type Account struct {
 	Balance          int64   `json:"balance"`
 	ClearedBalance   int64   `json:"cleared_balance"`
 	UnclearedBalance int64   `json:"uncleared_balance"`
+	TransferPayeeID  *string `json:"transfer_payee_id"`
 	Deleted          bool    `json:"deleted"`
 }
 
@@ -67,23 +68,24 @@ type Payee struct {
 }
 
 type TransactionDetail struct {
-	ID                string           `json:"id"`
-	Date              string           `json:"date"`
-	Amount            int64            `json:"amount"`
-	Memo              *string          `json:"memo"`
-	Cleared           string           `json:"cleared"`
-	Approved          bool             `json:"approved"`
-	FlagColor         *string          `json:"flag_color"`
-	FlagName          *string          `json:"flag_name"`
-	AccountID         string           `json:"account_id"`
-	AccountName       string           `json:"account_name"`
-	PayeeID           *string          `json:"payee_id"`
-	PayeeName         *string          `json:"payee_name"`
-	CategoryID        *string          `json:"category_id"`
-	CategoryName      *string          `json:"category_name"`
-	TransferAccountID *string          `json:"transfer_account_id"`
-	Deleted           bool             `json:"deleted"`
-	SubTransactions   []SubTransaction `json:"subtransactions"`
+	ID                    string           `json:"id"`
+	Date                  string           `json:"date"`
+	Amount                int64            `json:"amount"`
+	Memo                  *string          `json:"memo"`
+	Cleared               string           `json:"cleared"`
+	Approved              bool             `json:"approved"`
+	FlagColor             *string          `json:"flag_color"`
+	FlagName              *string          `json:"flag_name"`
+	AccountID             string           `json:"account_id"`
+	AccountName           string           `json:"account_name"`
+	PayeeID               *string          `json:"payee_id"`
+	PayeeName             *string          `json:"payee_name"`
+	CategoryID            *string          `json:"category_id"`
+	CategoryName          *string          `json:"category_name"`
+	TransferAccountID     *string          `json:"transfer_account_id"`
+	TransferTransactionID *string          `json:"transfer_transaction_id"`
+	Deleted               bool             `json:"deleted"`
+	SubTransactions       []SubTransaction `json:"subtransactions"`
 }
 
 type SubTransaction struct {
